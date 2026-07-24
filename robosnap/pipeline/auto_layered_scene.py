@@ -106,6 +106,9 @@ def preprocess_cache_valid(scene_dir: Path, args: argparse.Namespace | None = No
     recorded_dilation = mask_status.get("inpaint_dilation")
     if recorded_dilation is not None and recorded_dilation != args.inpaint_dilation:
         return False
+    requested_geometry = getattr(args, "geometry_prompts_per_object", None)
+    if requested_geometry is not None and mask_status.get("geometry_prompts_per_object") != requested_geometry:
+        return False
 
     expected_extra_hash = None
     if args.inpaint_extra_mask:
@@ -303,9 +306,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--object-file", type=Path)
     parser.add_argument(
         "--vlm-command",
-        help="Command template for object listing. Placeholders: {image}, {prompt}, {output_json}, {output_txt}.",
+        help="Command template for object listing. Placeholders: {image}, {prompt}, {output_json}, {output_txt}, {geometry_prompt_count}.",
     )
     parser.add_argument("--vlm-prompt", help="Object-discovery prompt text or path.")
+    parser.add_argument(
+        "--geometry-prompts-per-object",
+        type=int,
+        default=int(os.environ.get("GEOMETRY_PROMPTS_PER_OBJECT", "1")),
+        help="Maximum number of GUI-style point geometry prompts requested per object.",
+    )
     parser.add_argument("--support-prompts", default="table, desk, tabletop, tabletop surface")
     parser.add_argument("--inpaint-command", help="Command template. Placeholders: {image}, {mask}, {output}, {prompt}, {status}.")
     parser.add_argument("--inpaint-prompt", help="Background-completion prompt text or path.")
@@ -364,6 +373,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.geometry_prompts_per_object < 0:
+        raise ValueError("--geometry-prompts-per-object must be non-negative.")
     runner = Runner(args)
     scene_dir = runner.output_dir
     image_path = args.image.expanduser().resolve()
@@ -384,6 +395,8 @@ def main() -> int:
         str(args.sam3_checkpoint),
         "--support-prompts",
         args.support_prompts,
+        "--geometry-prompts-per-object",
+        str(args.geometry_prompts_per_object),
     ]
     if args.objects:
         preprocess_cmd.extend(["--objects", args.objects])

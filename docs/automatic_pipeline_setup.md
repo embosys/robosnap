@@ -59,10 +59,10 @@ INPUT_IMAGE=/path/to/image.png OUTPUT_DIR=/path/to/result \
 To bypass automatic object discovery, set `OBJECT_FILE` to a text file with one segmentation prompt per line or a JSON file with an `objects` list. A custom `VLM_COMMAND` must write:
 
 ~~~json
-{"objects":[{"name":"table","prompt":"complete table","fallback_prompt":"table","bbox_xyxy":[0.1,0.3,0.9,1.0],"support_parent_id":-1,"support_relation":"none"},{"name":"cup","prompt":"blue cup on the table","fallback_prompt":"blue cup","bbox_xyxy":[0.4,0.4,0.5,0.7],"support_parent_id":0,"support_relation":"on"}]}
+{"objects":[{"name":"table","prompt":"complete table","fallback_prompt":"table","bbox_xyxy":[0.1,0.3,0.9,1.0],"geometry_prompts":[{"points":[[0.2,0.4],[0.8,0.8]],"point_labels":[1,1],"rel_coordinates":true}],"support_parent_id":-1,"support_relation":"none"},{"name":"cup","prompt":"blue cup on the table","fallback_prompt":"blue cup","bbox_xyxy":[0.4,0.4,0.5,0.7],"geometry_prompts":[{"points":[[0.45,0.5],[0.49,0.55]],"point_labels":[1,0],"rel_coordinates":true}],"support_parent_id":0,"support_relation":"on"}]}
 ~~~
 
-`bbox_xyxy` uses normalized image coordinates. `support_parent_id` references an earlier object or is `-1`; `support_relation` is `on`, `inside`, or `none`. `INPAINT_COMMAND` receives `{image}`, `{mask}`, `{prompt}`, `{output}`, and `{status}` placeholders. See `configs/auto_pipeline.env.example` for both command templates.
+`bbox_xyxy` and `geometry_prompts` use normalized image-relative coordinates. Each geometry prompt follows the GUI contract: `points`, matching `point_labels` (`1` positive, `0` negative), and `rel_coordinates: true`. RoboSnap converts the positive points to the original SAM3 image-entry `cxcywh` box at the process boundary; the untouched SAM3 entry still receives its original JSON format. Set `GEOMETRY_PROMPTS_PER_OBJECT=0` to disable geometry prompts. If a provider omits them, segmentation falls back to text plus `bbox_xyxy`. `support_parent_id` references an earlier object or is `-1`; `support_relation` is `on`, `inside`, or `none`. `INPAINT_COMMAND` receives `{image}`, `{mask}`, `{prompt}`, `{output}`, and `{status}` placeholders. See `configs/auto_pipeline.env.example` for both command templates.
 
 ## Docker
 

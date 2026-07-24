@@ -30,6 +30,7 @@ args=(
 [[ -n "${OBJECT_FILE:-}" ]] && args+=(--object-file "${OBJECT_FILE}")
 [[ -n "${VLM_COMMAND:-}" ]] && args+=(--vlm-command "${VLM_COMMAND}")
 [[ -n "${VLM_PROMPT:-}" ]] && args+=(--vlm-prompt "${VLM_PROMPT}")
+[[ -n "${GEOMETRY_PROMPTS_PER_OBJECT:-}" ]] && args+=(--geometry-prompts-per-object "${GEOMETRY_PROMPTS_PER_OBJECT}")
 [[ -n "${INPAINT_COMMAND:-}" ]] && args+=(--inpaint-command "${INPAINT_COMMAND}")
 [[ -n "${INPAINT_PROMPT:-}" ]] && args+=(--inpaint-prompt "${INPAINT_PROMPT}")
 [[ -n "${INPAINT_DILATION:-}" ]] && args+=(--inpaint-dilation "${INPAINT_DILATION}")

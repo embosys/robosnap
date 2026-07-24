@@ -25,7 +25,7 @@ More components from the paper, including **evaluation code**, **real-robot depl
 
 - [x] GUI tool
 - [x] Fully automatic layered scene generation pipeline
-- [ ] Real-robot deployment tutorial
+- [x] Real-robot deployment tutorial
 - [ ] Evaluation code
 - [ ] DROID-Sim dataset
 
@@ -41,6 +41,8 @@ bash scripts/run_auto_pipeline.sh
 ```
 
 The default adapter uses Gemini for object detection and semantic background editing. Provider commands and input/output paths can be changed in `configs/auto_pipeline.env`. 
+
+Optional geometry prompts can improve SAM3 masks for small or visually ambiguous objects. Configure `GEOMETRY_PROMPTS_PER_OBJECT` as needed.
 
 The final outputs include:
 

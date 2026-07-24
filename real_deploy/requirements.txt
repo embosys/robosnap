@@ -1,0 +1,5 @@
+numpy>=1.24,<2
+loguru>=0.7,<1
+pyrealsense2>=2.55,<3
+opencv-python>=4.8,<5
+pymodbus==2.5.3

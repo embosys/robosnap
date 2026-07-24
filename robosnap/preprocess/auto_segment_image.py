@@ -27,6 +27,7 @@ from PIL import Image
 from robosnap.preprocess.sam3_mask_recovery import (
     fill_binary_holes,
     filter_small_components,
+    normalized_bbox_xyxy,
     recover_sam3_masks,
 )
 
@@ -35,6 +36,7 @@ DEFAULT_VLM_PROMPT = """Inspect the image and return a JSON object with an objec
 List every separate foreground asset needed to reconstruct the interactive scene, including complete support furniture, every item on or against it, partially occluded or image-border-truncated objects, and nearby dividers or occluders that intersect the workspace.
 Do not list walls, floor, ceiling, windows, distant people, or distant room furniture.
 Order direct physical supporters before their children. Use one entry per physical instance with name, a location-aware segmentation prompt, a concise fallback_prompt, and normalized bbox_xyxy coordinates.
+When reliable, also provide geometry_prompts: a list of GUI-compatible prompt objects. Each object must have {"points": [[x_rel, y_rel], ...], "point_labels": [1, 0, ...], "rel_coordinates": true}. Use two or more positive points when possible, and add negative points only when they are reliable. Coordinates are normalized image-relative coordinates with x to the right, y downward, and origin at the top-left. Labels use 1 for a foreground point and 0 for a background point. Return the most useful prompts first and return an empty list when no reliable geometry prompt is available.
 For every entry set support_parent_id to the zero-based index of its direct visible physical supporter, or -1 when it has none. Set support_relation to on, inside, or none. Support relationships may form an arbitrary-depth acyclic hierarchy.
 Return JSON only."""
 
@@ -74,15 +76,158 @@ def parse_comma_list(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def normalize_object_item(item: Any, index: int) -> dict[str, Any]:
+def normalize_geometry_prompts(
+    value: Any,
+    *,
+    limit: int | None = None,
+    object_index: int | None = None,
+) -> list[dict[str, Any]]:
+    if value is None or (limit is not None and limit <= 0):
+        return []
+    if isinstance(value, dict):
+        value = [value]
+    if not isinstance(value, list):
+        location = f" for object {object_index}" if object_index is not None else ""
+        raise ValueError(f"geometry_prompts{location} must be a list.")
+
+    prompts: list[dict[str, Any]] = []
+    for prompt_index, item in enumerate(value):
+        location = f" for object {object_index}" if object_index is not None else ""
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"geometry prompt {prompt_index}{location} must be a GUI prompt object."
+            )
+        points = item.get("points")
+        labels = item.get("point_labels")
+        if not isinstance(points, (list, tuple)) or not points:
+            raise ValueError(
+                f"geometry prompt {prompt_index}{location} must contain non-empty points."
+            )
+        if not isinstance(labels, (list, tuple)) or len(labels) != len(points):
+            raise ValueError(
+                f"geometry prompt {prompt_index}{location} must contain one point_label per point."
+            )
+        if item.get("rel_coordinates", True) is not True:
+            raise ValueError(
+                f"geometry prompt {prompt_index}{location} must use rel_coordinates=true."
+            )
+        normalized_points: list[list[float]] = []
+        normalized_labels: list[int] = []
+        for point_index, (point, label) in enumerate(zip(points, labels)):
+            if not isinstance(point, (list, tuple)) or len(point) != 2:
+                raise ValueError(
+                    f"geometry prompt {prompt_index}, point {point_index}{location} must be [x_rel, y_rel]."
+                )
+            try:
+                x_rel, y_rel = (float(point[0]), float(point[1]))
+                label_value = float(label)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"geometry prompt {prompt_index}, point {point_index}{location} is invalid."
+                ) from exc
+            label_int = int(label_value)
+            if (
+                not np.isfinite([x_rel, y_rel, label_value]).all()
+                or not 0.0 <= x_rel <= 1.0
+                or not 0.0 <= y_rel <= 1.0
+                or label_value not in (0.0, 1.0)
+                or isinstance(label, bool)
+            ):
+                raise ValueError(
+                    f"geometry prompt {prompt_index}, point {point_index}{location} must use normalized coordinates and label 0/1."
+                )
+            normalized_points.append([x_rel, y_rel])
+            normalized_labels.append(label_int)
+        prompts.append(
+            {
+                "points": normalized_points,
+                "point_labels": normalized_labels,
+                "rel_coordinates": True,
+            }
+        )
+        if limit is not None and len(prompts) >= limit:
+            break
+    return prompts
+
+
+def geometry_prompt_to_legacy_box(
+    prompts: list[dict[str, Any]],
+    fallback_bbox: Any = None,
+) -> list[float] | None:
+    """Convert GUI points to the original SAM3 image-entry box contract."""
+    positive_points = [
+        point
+        for prompt in prompts
+        for point, label in zip(prompt["points"], prompt["point_labels"])
+        if label == 1
+    ]
+    if positive_points and len(positive_points) >= 2:
+        x0 = min(point[0] for point in positive_points)
+        y0 = min(point[1] for point in positive_points)
+        x1 = max(point[0] for point in positive_points)
+        y1 = max(point[1] for point in positive_points)
+        if x1 <= x0:
+            x0 = max(0.0, x0 - 1e-3)
+            x1 = min(1.0, x1 + 1e-3)
+        if y1 <= y0:
+            y0 = max(0.0, y0 - 1e-3)
+            y1 = min(1.0, y1 + 1e-3)
+    else:
+        if fallback_bbox is None:
+            if not positive_points:
+                return None
+            x0 = max(0.0, positive_points[0][0] - 1e-3)
+            y0 = max(0.0, positive_points[0][1] - 1e-3)
+            x1 = min(1.0, positive_points[0][0] + 1e-3)
+            y1 = min(1.0, positive_points[0][1] + 1e-3)
+        else:
+            x0, y0, x1, y1 = fallback_bbox
+    return [
+        (x0 + x1) * 0.5,
+        (y0 + y1) * 0.5,
+        x1 - x0,
+        y1 - y0,
+    ]
+
+
+def geometry_prompts_to_legacy_boxes(
+    objects: list[dict[str, Any]],
+    geometry_prompts: list[list[dict[str, Any]]],
+) -> list[list[float]] | None:
+    if not any(geometry_prompts):
+        return None
+    boxes: list[list[float]] = []
+    for index, obj in enumerate(objects):
+        prompts = geometry_prompts[index] if index < len(geometry_prompts) else []
+        box = geometry_prompt_to_legacy_box(
+            prompts,
+            fallback_bbox=normalized_bbox_xyxy(obj),
+        )
+        if box is None:
+            return None
+        boxes.append(box)
+    return boxes
+
+
+def normalize_object_item(
+    item: Any,
+    index: int,
+    *,
+    geometry_prompt_limit: int | None = None,
+) -> dict[str, Any]:
     if isinstance(item, str):
         prompt = item.strip()
-        return {"id": index, "name": prompt, "prompt": prompt}
+        return {"id": index, "name": prompt, "prompt": prompt, "geometry_prompts": []}
     if isinstance(item, dict):
         name = str(item.get("name") or item.get("label") or item.get("prompt") or f"object_{index}").strip()
         prompt = str(item.get("prompt") or item.get("segmentation_prompt") or item.get("description") or name).strip()
         out = dict(item)
         out.update({"id": index, "name": name, "prompt": prompt})
+        out["geometry_prompts"] = normalize_geometry_prompts(
+            out.get("geometry_prompts"),
+            limit=geometry_prompt_limit,
+            object_index=index,
+        )
         parent = out.get("support_parent_id")
         if parent is not None:
             try:
@@ -97,7 +242,11 @@ def normalize_object_item(item: Any, index: int) -> dict[str, Any]:
     raise ValueError(f"Unsupported object item at index {index}: {type(item)!r}")
 
 
-def normalize_objects(data: Any) -> list[dict[str, Any]]:
+def normalize_objects(
+    data: Any,
+    *,
+    geometry_prompt_limit: int | None = None,
+) -> list[dict[str, Any]]:
     if isinstance(data, dict):
         if "objects" in data:
             data = data["objects"]
@@ -107,7 +256,14 @@ def normalize_objects(data: Any) -> list[dict[str, Any]]:
             raise ValueError("VLM JSON must contain an 'objects' or 'prompts' field.")
     if not isinstance(data, list):
         raise ValueError(f"Expected a list of objects/prompts, got {type(data)!r}")
-    objects = [normalize_object_item(item, i) for i, item in enumerate(data)]
+    objects = [
+        normalize_object_item(
+            item,
+            i,
+            geometry_prompt_limit=geometry_prompt_limit,
+        )
+        for i, item in enumerate(data)
+    ]
     return [obj for obj in objects if obj["prompt"]]
 
 
@@ -115,29 +271,56 @@ def expand_command_template(template: str, **values: str) -> list[str]:
     return [token.format(**values) for token in shlex.split(template)]
 
 
+def add_geometry_prompt_instruction(prompt: str, count: int) -> str:
+    marker = "Requested geometry prompts per object:"
+    if marker in prompt:
+        return prompt
+    return (
+        f"{prompt.rstrip()}\n"
+        f"Requested geometry prompts per object: at most {count}. "
+        "Use GUI-compatible points/point_labels with rel_coordinates=true; return [] when unreliable."
+    )
+
+
 def load_objects(args: argparse.Namespace, output_dir: Path) -> list[dict[str, Any]]:
     if args.objects:
-        return normalize_objects(parse_comma_list(args.objects))
+        return normalize_objects(
+            parse_comma_list(args.objects),
+            geometry_prompt_limit=args.geometry_prompts_per_object,
+        )
 
     if args.object_file:
         path = Path(args.object_file)
         if not path.exists():
             raise FileNotFoundError(path)
         if path.suffix.lower() == ".json":
-            return normalize_objects(json.loads(path.read_text(encoding="utf-8")))
-        return normalize_objects([line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()])
+            return normalize_objects(
+                json.loads(path.read_text(encoding="utf-8")),
+                geometry_prompt_limit=args.geometry_prompts_per_object,
+            )
+        return normalize_objects(
+            [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()],
+            geometry_prompt_limit=args.geometry_prompts_per_object,
+        )
 
     if args.vlm_command:
         output_json = output_dir / "vlm_objects.json"
         output_txt = output_dir / "object.txt"
         prompt_path = output_dir / "vlm_prompt.txt"
-        prompt_path.write_text(load_prompt_text(args.vlm_prompt), encoding="utf-8")
+        prompt_path.write_text(
+            add_geometry_prompt_instruction(
+                load_prompt_text(args.vlm_prompt),
+                args.geometry_prompts_per_object,
+            ),
+            encoding="utf-8",
+        )
         command = expand_command_template(
             args.vlm_command,
             image=str(args.image),
             prompt=str(prompt_path),
             output_json=str(output_json),
             output_txt=str(output_txt),
+            geometry_prompt_count=str(args.geometry_prompts_per_object),
         )
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
@@ -146,15 +329,27 @@ def load_objects(args: argparse.Namespace, output_dir: Path) -> list[dict[str, A
                 f"{result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
             )
         if output_json.exists():
-            return normalize_objects(json.loads(output_json.read_text(encoding="utf-8")))
+            return normalize_objects(
+                json.loads(output_json.read_text(encoding="utf-8")),
+                geometry_prompt_limit=args.geometry_prompts_per_object,
+            )
         stdout = result.stdout.strip()
         if stdout:
             try:
-                return normalize_objects(json.loads(stdout))
+                return normalize_objects(
+                    json.loads(stdout),
+                    geometry_prompt_limit=args.geometry_prompts_per_object,
+                )
             except json.JSONDecodeError:
-                return normalize_objects([line.strip() for line in stdout.splitlines() if line.strip()])
+                return normalize_objects(
+                    [line.strip() for line in stdout.splitlines() if line.strip()],
+                    geometry_prompt_limit=args.geometry_prompts_per_object,
+                )
         if output_txt.exists():
-            return normalize_objects([line.strip() for line in output_txt.read_text(encoding="utf-8").splitlines() if line.strip()])
+            return normalize_objects(
+                [line.strip() for line in output_txt.read_text(encoding="utf-8").splitlines() if line.strip()],
+                geometry_prompt_limit=args.geometry_prompts_per_object,
+            )
         raise RuntimeError("VLM command succeeded but produced no object list.")
 
     raise RuntimeError("No object source configured. Pass --objects, --object-file, or --vlm-command.")
@@ -215,6 +410,8 @@ def run_sam3(
     python: str,
     sam3_dir: Path,
     checkpoint: Path,
+    geometry_prompts: list[list[dict[str, Any]]] | None = None,
+    objects: list[dict[str, Any]] | None = None,
 ) -> None:
     if not prompts:
         return
@@ -223,13 +420,20 @@ def run_sam3(
     if missing:
         raise FileNotFoundError("Missing SAM3 input(s): " + ", ".join(str(p) for p in missing))
     out_dir.mkdir(parents=True, exist_ok=True)
+    geometry_prompts = geometry_prompts or []
+    legacy_boxes = (
+        geometry_prompts_to_legacy_boxes(objects or [], geometry_prompts)
+        if objects is not None
+        else None
+    )
+    use_geometry = legacy_boxes is not None
     cmd = [
         python,
         str(script),
         "--image",
         str(image),
         "--prompt_mode",
-        "0",
+        "2" if use_geometry else "0",
         "--text_prompts",
         # SAM3 uses commas as its prompt-list delimiter; keep one mask per VLM object.
         ",".join(prompt.replace(",", ";") for prompt in prompts),
@@ -238,6 +442,8 @@ def run_sam3(
         "--out_dir",
         str(out_dir),
     ]
+    if use_geometry:
+        cmd.extend(["--geo_prompts", json.dumps(legacy_boxes, separators=(",", ":"))])
     print("[auto-segment] " + " ".join(shlex.quote(part) for part in cmd))
     proc = subprocess.run(cmd, cwd=str(sam3_dir), env=build_env_with_pythonpath(sam3_dir))
     if proc.returncode != 0:
@@ -399,8 +605,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--objects", help="Comma-separated object prompts.")
     parser.add_argument("--object-file", type=Path, help="Text or JSON object list.")
-    parser.add_argument("--vlm-command", help="Command template. Placeholders: {image}, {prompt}, {output_json}, {output_txt}.")
+    parser.add_argument(
+        "--vlm-command",
+        help="Command template. Placeholders: {image}, {prompt}, {output_json}, {output_txt}, {geometry_prompt_count}.",
+    )
     parser.add_argument("--vlm-prompt", default=DEFAULT_VLM_PROMPT, help="Prompt text or path passed to the VLM command.")
+    parser.add_argument(
+        "--geometry-prompts-per-object",
+        type=int,
+        default=int(os.environ.get("GEOMETRY_PROMPTS_PER_OBJECT", "1")),
+        help="Maximum number of GUI-style point geometry prompts requested per object.",
+    )
     parser.add_argument("--support-prompts", default="table, desk, tabletop, tabletop surface")
     parser.add_argument("--sam3-python", default=os.environ.get("PY_SAM3", sys.executable))
     parser.add_argument("--sam3-dir", type=Path, default=Path(os.environ.get("SAM3_DIR", root / "third_party" / "sam3")))
@@ -414,6 +629,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.geometry_prompts_per_object < 0:
+        raise ValueError("--geometry-prompts-per-object must be non-negative.")
     args.image = args.image.expanduser().resolve()
     if args.inpaint_extra_mask is not None:
         args.inpaint_extra_mask = args.inpaint_extra_mask.expanduser().resolve()
@@ -436,6 +653,8 @@ def main() -> int:
         image=args.image,
         prompts=prompts,
         out_dir=sam3d_dir,
+        geometry_prompts=[obj.get("geometry_prompts", []) for obj in objects],
+        objects=objects,
         python=args.sam3_python,
         sam3_dir=args.sam3_dir.expanduser().resolve(),
         checkpoint=args.sam3_checkpoint.expanduser().resolve(),
@@ -477,6 +696,10 @@ def main() -> int:
         "status": "ready",
         "objects": prompts,
         "object_count": len(prompts),
+        "geometry_prompts_per_object": args.geometry_prompts_per_object,
+        "geometry_prompt_counts": [
+            len(obj.get("geometry_prompts", [])) for obj in objects
+        ],
         "inpaint_dilation": args.inpaint_dilation,
         **mask_stats,
     }

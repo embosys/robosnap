@@ -42,6 +42,31 @@ OBJECT_SCHEMA = {
                         "type": "string",
                         "enum": ["on", "inside", "none"],
                     },
+                    "geometry_prompts": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "points": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "array",
+                                        "items": {"type": "number"},
+                                        "minItems": 2,
+                                        "maxItems": 2,
+                                    },
+                                    "minItems": 1,
+                                },
+                                "point_labels": {
+                                    "type": "array",
+                                    "items": {"type": "integer"},
+                                    "minItems": 1,
+                                },
+                                "rel_coordinates": {"type": "boolean"},
+                            },
+                            "required": ["points", "point_labels", "rel_coordinates"],
+                        },
+                    },
                 },
                 "required": [
                     "name",
@@ -61,6 +86,17 @@ OBJECT_SCHEMA = {
 def load_prompt(value: str) -> str:
     path = Path(value).expanduser()
     return path.read_text(encoding="utf-8").strip() if path.is_file() else value.strip()
+
+
+def add_geometry_prompt_instruction(prompt: str, count: int) -> str:
+    marker = "Requested geometry prompts per object:"
+    if marker in prompt:
+        return prompt
+    return (
+        f"{prompt.rstrip()}\n"
+        f"Requested geometry prompts per object: at most {count}. "
+        "Use GUI-compatible points/point_labels with rel_coordinates=true; return [] when unreliable."
+    )
 
 
 def image_block(path: Path) -> dict[str, str]:
@@ -133,7 +169,77 @@ def extract_output_text(response: dict[str, Any]) -> str:
     raise RuntimeError("Gemini response did not contain text output.")
 
 
-def parse_objects(text: str) -> dict[str, list[dict[str, Any]]]:
+def normalize_geometry_prompts(
+    value: Any,
+    *,
+    limit: int,
+    object_index: int,
+) -> list[dict[str, Any]]:
+    if value is None or limit <= 0:
+        return []
+    if isinstance(value, dict):
+        value = [value]
+    if not isinstance(value, list):
+        raise ValueError(f"Object {object_index} geometry_prompts must be a list.")
+    normalized = []
+    for prompt_index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"Object {object_index} geometry prompt {prompt_index} must be a GUI prompt object."
+            )
+        points = item.get("points")
+        labels = item.get("point_labels")
+        if not isinstance(points, list) or not points:
+            raise ValueError(
+                f"Object {object_index} geometry prompt {prompt_index} must contain non-empty points."
+            )
+        if not isinstance(labels, list) or len(labels) != len(points):
+            raise ValueError(
+                f"Object {object_index} geometry prompt {prompt_index} must contain one point_label per point."
+            )
+        if item.get("rel_coordinates", True) is not True:
+            raise ValueError(
+                f"Object {object_index} geometry prompt {prompt_index} must use rel_coordinates=true."
+            )
+        normalized_points = []
+        normalized_labels = []
+        for point_index, (point, label) in enumerate(zip(points, labels)):
+            if not isinstance(point, list) or len(point) != 2:
+                raise ValueError(
+                    f"Object {object_index} geometry prompt {prompt_index}, point {point_index} must be [x_rel, y_rel]."
+                )
+            point = [float(number) for number in point]
+            label_value = float(label)
+            label_int = int(label_value)
+            if (
+                len(point) != 2
+                or not all(math.isfinite(number) and 0.0 <= number <= 1.0 for number in point)
+                or not math.isfinite(label_value)
+                or label_value not in (0.0, 1.0)
+                or isinstance(label, bool)
+            ):
+                raise ValueError(
+                    f"Object {object_index} geometry prompt {prompt_index}, point {point_index} is invalid."
+                )
+            normalized_points.append(point)
+            normalized_labels.append(label_int)
+        normalized.append(
+            {
+                "points": normalized_points,
+                "point_labels": normalized_labels,
+                "rel_coordinates": True,
+            }
+        )
+        if len(normalized) >= limit:
+            break
+    return normalized
+
+
+def parse_objects(
+    text: str,
+    *,
+    geometry_prompts_per_object: int = 1,
+) -> dict[str, list[dict[str, Any]]]:
     if text.startswith("```"):
         lines = text.splitlines()
         text = "\n".join(lines[1:-1]).strip()
@@ -168,6 +274,11 @@ def parse_objects(text: str) -> dict[str, list[dict[str, Any]]]:
             raise ValueError(f"Object {index} bbox_xyxy must use normalized coordinates.")
         if bbox[0] >= bbox[2] or bbox[1] >= bbox[3]:
             raise ValueError(f"Object {index} bbox_xyxy is empty or reversed.")
+        geometry_prompts = normalize_geometry_prompts(
+            item.get("geometry_prompts"),
+            limit=geometry_prompts_per_object,
+            object_index=index,
+        )
         normalized.append(
             {
                 "name": str(item.get("name") or fallback).strip(),
@@ -176,6 +287,7 @@ def parse_objects(text: str) -> dict[str, list[dict[str, Any]]]:
                 "bbox_xyxy": bbox,
                 "support_parent_id": parent_id,
                 "support_relation": relation,
+                "geometry_prompts": geometry_prompts,
             }
         )
     return {"objects": normalized}
@@ -192,15 +304,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--retries", type=int, default=2)
     parser.add_argument("--retry-delay", type=float, default=3.0)
+    parser.add_argument(
+        "--geometry-prompts-per-object",
+        type=int,
+        default=int(os.environ.get("GEOMETRY_PROMPTS_PER_OBJECT", "1")),
+        help="Maximum number of GUI-style point geometry prompts retained per object.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if args.geometry_prompts_per_object < 0:
+        raise ValueError("--geometry-prompts-per-object must be non-negative.")
     image = args.image.expanduser().resolve()
     if not image.is_file():
         raise FileNotFoundError(image)
-    objects = parse_objects(extract_output_text(request_gemini(build_request(image, load_prompt(args.prompt), args.model), args)))
+    prompt = add_geometry_prompt_instruction(
+        load_prompt(args.prompt),
+        args.geometry_prompts_per_object,
+    )
+    objects = parse_objects(
+        extract_output_text(request_gemini(build_request(image, prompt, args.model), args)),
+        geometry_prompts_per_object=args.geometry_prompts_per_object,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(objects, indent=2), encoding="utf-8")
     print(args.output)
