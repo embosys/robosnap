@@ -4,6 +4,7 @@ checkpoints/*
 outputs/*
 !outputs/.gitkeep
 data/
+evaluation/
 !third_party/sam-3d-objects/sam3d_objects/data/
 !third_party/sam-3d-objects/sam3d_objects/data/**/*.py
 *.log
@@ -80,6 +81,8 @@ wandb/
 feedback.md
 
 # Local batch evaluation tools
+scripts/droid-sim/
+scripts/droid-sim-transition/
 scripts/precompute_batch_vggt.py
 scripts/run_batch_layered_scenes.py
 scripts/run_batch_marble_alignment.py

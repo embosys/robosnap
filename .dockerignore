@@ -23,8 +23,11 @@ checkpoints/*
 outputs/*
 !outputs/.gitkeep
 data
+evaluation
 staging
 tmp
+scripts/droid-sim
+scripts/droid-sim-transition
 dist
 robosnap/gui/RoboSnapGUI copy
 robosnap/alignment

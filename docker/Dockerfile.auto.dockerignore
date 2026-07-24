@@ -33,8 +33,11 @@ configs/auto_pipeline.env
 checkpoints
 outputs
 data
+evaluation
 staging
 tmp
+scripts/droid-sim
+scripts/droid-sim-transition
 build
 dist
 assets
