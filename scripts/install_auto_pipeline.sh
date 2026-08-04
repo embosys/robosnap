@@ -167,18 +167,18 @@ install_asset() {
   run "${CONDA_BIN}" install -y -n "${ASSET_ENV}" -c conda-forge \
     cmake ninja packaging libgl ffmpeg gcc=12.4.0 gxx=12.4.0 eigen zlib
   run "${CONDA_BIN}" install -y -n "${ASSET_ENV}" -c nvidia/label/cuda-12.1.1 cuda-toolkit=12.1.1
-  pip_install "${ASSET_ENV}" --upgrade pip setuptools wheel packaging ninja
+  pip_install "${ASSET_ENV}" --upgrade pip setuptools wheel packaging ninja hatchling hatch-requirements-txt scikit-build-core
   pip_install "${ASSET_ENV}" --index-url "${TORCH_CU121_INDEX}" torch==2.5.1 torchvision==0.20.1
   build_pip_install "${ASSET_ENV}" flash_attn==2.8.3 --no-build-isolation
-  build_pip_install "${ASSET_ENV}" -e "${ROOT}/third_party/sam-3d-objects"
-  build_pip_install "${ASSET_ENV}" -e "${ROOT}/third_party/sam-3d-objects[p3d]"
+  build_pip_install "${ASSET_ENV}" -e "${ROOT}/third_party/sam-3d-objects" --no-build-isolation
+  build_pip_install "${ASSET_ENV}" -e "${ROOT}/third_party/sam-3d-objects[p3d]" --no-build-isolation
   run env \
     CUDA_HOME="$(conda_prefix "${ASSET_ENV}")" \
     MAX_JOBS="${MAX_JOBS}" \
     PIP_FIND_LINKS="${KAOLIN_FIND_LINKS}" \
     PIP_EXTRA_INDEX_URL="${PIP_EXTRA_INDEX_URLS}" \
     "${CONDA_BIN}" run -n "${ASSET_ENV}" python -m pip install \
-    -e "${ROOT}/third_party/sam-3d-objects[inference]"
+    -e "${ROOT}/third_party/sam-3d-objects[inference]" --no-build-isolation
   run "${CONDA_BIN}" run -n "${ASSET_ENV}" python "${ROOT}/third_party/sam-3d-objects/patching/hydra"
   pip_install "${ASSET_ENV}" \
     numpy==1.26.4 scipy==1.16.3 open3d==0.18.0 trimesh==4.10.1 \
