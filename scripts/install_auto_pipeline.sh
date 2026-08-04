@@ -120,12 +120,12 @@ create_env() {
 
 conda_prefix() {
   local env_name="$1"
-  "${CONDA_BIN}" run -n "${env_name}" python -c 'import sys; print(sys.prefix)'
+  "${CONDA_BIN}" run -n "${env_name}" python -c 'import sys; print(sys.prefix)' | tail -1
 }
 
 site_packages() {
   local env_name="$1"
-  "${CONDA_BIN}" run -n "${env_name}" python -c 'import site; print(site.getsitepackages()[0])'
+  "${CONDA_BIN}" run -n "${env_name}" python -c 'import site; print(site.getsitepackages()[0])' | tail -1
 }
 
 pip_install() {
@@ -249,7 +249,7 @@ verify_envs() {
 python_for_env() {
   local env_name="$1"
   if env_exists "${env_name}"; then
-    "${CONDA_BIN}" run -n "${env_name}" python -c 'import sys; print(sys.executable)'
+    "${CONDA_BIN}" run -n "${env_name}" python -c 'import sys; print(sys.executable)' | tail -1
   else
     printf 'python\n'
   fi
