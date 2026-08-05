@@ -155,9 +155,11 @@ build_pip_install() {
 
 install_sam3() {
   create_env "${SAM3_ENV}" "${SAM3_PYTHON}"
-  pip_install "${SAM3_ENV}" --upgrade pip setuptools wheel
+  pip_install "${SAM3_ENV}" --upgrade pip "setuptools<81" wheel
   pip_install "${SAM3_ENV}" --index-url "${TORCH_CU126_INDEX}" torch==2.7.0 torchvision==0.22.0
   pip_install "${SAM3_ENV}" opencv-python==4.11.0.86
+  # sam3 imports these unconditionally but only declares them in optional extras
+  pip_install "${SAM3_ENV}" einops decord pycocotools psutil
   pip_install "${SAM3_ENV}" -e "${ROOT}" --no-deps
   pip_install "${SAM3_ENV}" -e "${ROOT}/third_party/sam3"
 }
@@ -167,7 +169,7 @@ install_asset() {
   run "${CONDA_BIN}" install -y -n "${ASSET_ENV}" -c conda-forge \
     cmake ninja packaging libgl ffmpeg gcc=12.4.0 gxx=12.4.0 eigen zlib
   run "${CONDA_BIN}" install -y -n "${ASSET_ENV}" -c nvidia/label/cuda-12.1.1 cuda-toolkit=12.1.1
-  pip_install "${ASSET_ENV}" --upgrade pip setuptools wheel packaging ninja hatchling hatch-requirements-txt scikit-build-core editables
+  pip_install "${ASSET_ENV}" --upgrade pip "setuptools<81" wheel packaging ninja hatchling hatch-requirements-txt scikit-build-core editables
   pip_install "${ASSET_ENV}" --index-url "${TORCH_CU121_INDEX}" torch==2.5.1 torchvision==0.20.1
   build_pip_install "${ASSET_ENV}" flash_attn==2.8.3 --no-build-isolation
   build_pip_install "${ASSET_ENV}" -e "${ROOT}/third_party/sam-3d-objects" --no-build-isolation
@@ -195,11 +197,11 @@ install_asset() {
 install_lyra() {
   create_env "${LYRA_ENV}" "${LYRA_PYTHON}"
   run "${CONDA_BIN}" install -y -n "${LYRA_ENV}" -c conda-forge \
-    cmake ninja libgl ffmpeg packaging
+    cmake ninja libgl ffmpeg packaging nvtx-c
   run env CONDA_BACKUP_CXX= "${CONDA_BIN}" install -y -n "${LYRA_ENV}" -c conda-forge \
     gcc=13.3.0 gxx=13.3.0 eigen zlib
   run "${CONDA_BIN}" install -y -n "${LYRA_ENV}" -c nvidia/label/cuda-12.8.0 cuda
-  pip_install "${LYRA_ENV}" --upgrade pip setuptools wheel
+  pip_install "${LYRA_ENV}" --upgrade pip "setuptools<81" wheel packaging ninja hatchling hatch-requirements-txt scikit-build-core editables
   pip_install "${LYRA_ENV}" --index-url "${TORCH_CU128_INDEX}" torch==2.7.1 torchvision==0.22.1
   build_pip_install "${LYRA_ENV}" --no-deps -r "${ROOT}/third_party/lyra/Lyra-2/requirements.txt"
   build_pip_install "${LYRA_ENV}" "git+https://github.com/microsoft/MoGe.git@07444410f1e33f402353b99d6ccd26bd31e469e8"
@@ -220,7 +222,7 @@ install_lyra() {
 
 install_sim() {
   create_env "${SIM_ENV}" "${SIM_PYTHON}"
-  pip_install "${SIM_ENV}" --upgrade pip setuptools wheel
+  pip_install "${SIM_ENV}" --upgrade pip "setuptools<81" wheel
   pip_install "${SIM_ENV}" --index-url "${TORCH_CU121_INDEX}" torch==2.4.0 torchvision==0.19.0
   pip_install "${SIM_ENV}" \
     manifold3d==3.4.0 numpy==1.26.4 open3d==0.19.0 \
