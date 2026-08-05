@@ -44,9 +44,13 @@ def load_prompt(value: str | None) -> str:
     if not value:
         return DEFAULT_PROMPT
     path = Path(value)
-    if path.exists():
-        text = path.read_text(encoding="utf-8").strip()
-    else:
+    try:
+        if path.is_file():
+            text = path.read_text(encoding="utf-8").strip()
+        else:
+            text = value.strip()
+    except OSError:
+        # Long or otherwise invalid path-like prompt text is still valid inline text.
         text = value.strip()
     return text or DEFAULT_PROMPT
 

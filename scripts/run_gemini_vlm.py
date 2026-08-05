@@ -87,7 +87,13 @@ OBJECT_SCHEMA = {
 
 def load_prompt(value: str) -> str:
     path = Path(value).expanduser()
-    return path.read_text(encoding="utf-8").strip() if path.is_file() else value.strip()
+    try:
+        if path.is_file():
+            return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        # Long or otherwise invalid path-like prompt text is still valid inline text.
+        pass
+    return value.strip()
 
 
 def add_geometry_prompt_instruction(prompt: str, count: int) -> str:
@@ -305,7 +311,11 @@ def parse_objects(
     data = json.loads(text)
     objects = data.get("objects") if isinstance(data, dict) else None
     if not isinstance(objects, list) or not objects:
-        raise ValueError("Gemini output must contain a non-empty objects list.")
+        preview = text[:1000]
+        raise ValueError(
+            "Gemini output must contain a non-empty objects list. "
+            f"Received: {preview}"
+        )
 
     normalized = []
     for index, item in enumerate(objects):
