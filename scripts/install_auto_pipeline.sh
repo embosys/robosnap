@@ -318,6 +318,7 @@ write_auto_env() {
     printf 'DEVICE=${DEVICE:-cuda:0}\nCUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}\nINPAINT_DILATION=${INPAINT_DILATION:-7}\n\n'
     printf '# Set OBJECT_FILE to bypass automatic object discovery.\n'
     printf '# OBJECT_FILE=/path/to/object.txt\n'
+    printf 'GEMINI_API_STYLE=interactions\n'
     printf 'GEMINI_TEXT_MODEL=gemini-3.5-flash\n'
     printf 'VLM_COMMAND="%s ${ROBOSNAP_ROOT}/scripts/run_gemini_vlm.py --image {image} --prompt {prompt} --output {output_json}"\n' "${py_asset}"
     printf 'INPAINT_PROMPT=${ROBOSNAP_ROOT}/configs/prompts/background_inpaint.txt\n'

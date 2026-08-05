@@ -17,6 +17,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from PIL import Image, ImageFilter
 
 DEFAULT_MODEL = "gemini-3.1-flash-image"
 DEFAULT_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+DEFAULT_API_STYLE = "interactions"
 DEFAULT_PROMPT = """You are an excellent image inpainter and currently are here to help me inpaint the masked image where only the background is reserved and the interactive area is removed.
 Please remove all the black area from these scenes, which is not included in the background.
 Keep the room structure unchanged.
@@ -89,6 +91,45 @@ def build_request(image_path: Path, mask_path: Path, prompt: str, args: argparse
         + "that segmentation missed, including the complete desk/desktop when present. "
         + "Preserve the room background, camera intrinsics, perspective, lighting, and aspect ratio."
     )
+    if args.api_style == "generate_content":
+        image_config: dict[str, Any] = {}
+        if args.aspect_ratio:
+            image_config["aspectRatio"] = args.aspect_ratio
+        if args.image_size:
+            image_config["imageSize"] = args.image_size
+        generation_config: dict[str, Any] = {"responseModalities": ["IMAGE"]}
+        if image_config:
+            generation_config["imageConfig"] = image_config
+        return {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": full_prompt},
+                        {
+                            "inlineData": {
+                                "mimeType": "image/png",
+                                "data": image_to_png_b64(image_path),
+                            }
+                        },
+                        {
+                            "inlineData": {
+                                "mimeType": "image/png",
+                                "data": masked_scene_to_png_b64(image_path, mask_path),
+                            }
+                        },
+                        {
+                            "inlineData": {
+                                "mimeType": "image/png",
+                                "data": mask_to_png_b64(mask_path, image_size),
+                            }
+                        },
+                    ],
+                }
+            ],
+            "generationConfig": generation_config,
+        }
+
     response_format: dict[str, Any] = {"type": "image", "mime_type": "image/png"}
     if args.aspect_ratio:
         response_format["aspect_ratio"] = args.aspect_ratio
@@ -107,11 +148,41 @@ def build_request(image_path: Path, mask_path: Path, prompt: str, args: argparse
     }
 
 
+def request_url(args: argparse.Namespace) -> str:
+    base = args.api_base.rstrip("/")
+    if args.api_style == "generate_content":
+        model = args.model.removeprefix("models/")
+        return f"{base}/models/{urllib.parse.quote(model, safe='')}:generateContent"
+    return f"{base}/interactions"
+
+
+def decode_json_response(response: Any, url: str) -> dict[str, Any]:
+    raw = response.read()
+    content_type = response.headers.get("Content-Type", "unknown")
+    status = getattr(response, "status", "unknown")
+    if not raw:
+        raise RuntimeError(
+            f"Gemini returned an empty HTTP {status} response from {url} "
+            f"(content-type: {content_type}). Check the API base and protocol."
+        )
+    try:
+        result = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        preview = raw[:500].decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Gemini returned a non-JSON HTTP {status} response from {url} "
+            f"(content-type: {content_type}): {preview}"
+        ) from exc
+    if not isinstance(result, dict):
+        raise RuntimeError(f"Gemini returned a non-object JSON response from {url}.")
+    return result
+
+
 def request_gemini(payload: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     api_key = args.api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise RuntimeError("Missing Gemini API key. Set GEMINI_API_KEY or GOOGLE_API_KEY.")
-    url = f"{args.api_base.rstrip('/')}/interactions"
+    url = request_url(args)
     data = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
     last_error: Exception | None = None
@@ -119,11 +190,11 @@ def request_gemini(payload: dict[str, Any], args: argparse.Namespace) -> dict[st
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=args.timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                return decode_json_response(resp, url)
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             last_error = RuntimeError(f"Gemini HTTP {exc.code}: {body}")
-        except urllib.error.URLError as exc:
+        except (urllib.error.URLError, RuntimeError) as exc:
             last_error = RuntimeError(f"Gemini request failed: {exc}")
         if attempt < args.retries:
             time.sleep(args.retry_delay * (attempt + 1))
@@ -204,6 +275,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt", help="Prompt text or path to a prompt file.")
     parser.add_argument("--model", default=os.environ.get("GEMINI_IMAGE_MODEL", DEFAULT_MODEL))
     parser.add_argument("--api-base", default=os.environ.get("GEMINI_API_BASE", DEFAULT_API_BASE))
+    parser.add_argument(
+        "--api-style",
+        choices=("interactions", "generate_content"),
+        default=os.environ.get("GEMINI_API_STYLE", DEFAULT_API_STYLE),
+        help="Gemini REST protocol. generate_content supports Gemini-native proxy gateways.",
+    )
     parser.add_argument("--api-key", default=os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
     parser.add_argument("--aspect-ratio", help="Optional Gemini response_format aspect_ratio, e.g. 16:9.")
     parser.add_argument("--image-size", help="Optional Gemini response_format image_size, e.g. 1K or 2K.")
@@ -250,6 +327,7 @@ def main() -> int:
         "status": "gemini_image_edit_complete",
         "model": args.model,
         "api_base": args.api_base,
+        "api_style": args.api_style,
         "image": str(args.image),
         "mask": str(args.mask),
         "output": str(args.output),

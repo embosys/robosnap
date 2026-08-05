@@ -49,6 +49,21 @@ export GEMINI_API_KEY=<your-api-key>
 bash scripts/run_auto_pipeline.sh
 ~~~
 
+The bundled adapters use the Gemini Interactions API by default. A gateway that
+implements the Gemini-native `generateContent` protocol can be configured in
+`configs/auto_pipeline.env` without replacing the provider commands:
+
+~~~bash
+GEMINI_API_STYLE=generate_content
+GEMINI_API_BASE=https://gateway.example/v1beta
+GEMINI_TEXT_MODEL=gemini-3.5-flash
+GEMINI_IMAGE_MODEL=gemini-3.1-flash-image
+~~~
+
+The gateway must support structured JSON output for the text model and image
+output for the image model. OpenAI-compatible `/v1/chat/completions` gateways
+are not covered by this setting.
+
 Run another image in its chosen output directory:
 
 ~~~bash

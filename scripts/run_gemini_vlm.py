@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""List reconstructable foreground objects with the Gemini Interactions API."""
+"""List reconstructable foreground objects with a Gemini API."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from typing import Any
 
 DEFAULT_MODEL = "gemini-3.5-flash"
 DEFAULT_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+DEFAULT_API_STYLE = "interactions"
 OBJECT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -108,10 +110,37 @@ def image_block(path: Path) -> dict[str, str]:
     }
 
 
-def build_request(image: Path, prompt: str, model: str) -> dict[str, Any]:
+def build_request(
+    image: Path,
+    prompt: str,
+    model: str,
+    api_style: str = DEFAULT_API_STYLE,
+) -> dict[str, Any]:
+    image = image_block(image)
+    if api_style == "generate_content":
+        return {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": prompt},
+                        {
+                            "inlineData": {
+                                "mimeType": image["mime_type"],
+                                "data": image["data"],
+                            }
+                        },
+                    ],
+                }
+            ],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseJsonSchema": OBJECT_SCHEMA,
+            },
+        }
     return {
         "model": model,
-        "input": [{"type": "text", "text": prompt}, image_block(image)],
+        "input": [{"type": "text", "text": prompt}, image],
         "response_format": {
             "type": "text",
             "mime_type": "application/json",
@@ -121,11 +150,41 @@ def build_request(image: Path, prompt: str, model: str) -> dict[str, Any]:
     }
 
 
+def request_url(args: argparse.Namespace) -> str:
+    base = args.api_base.rstrip("/")
+    if args.api_style == "generate_content":
+        model = args.model.removeprefix("models/")
+        return f"{base}/models/{urllib.parse.quote(model, safe='')}:generateContent"
+    return f"{base}/interactions"
+
+
+def decode_json_response(response: Any, url: str) -> dict[str, Any]:
+    raw = response.read()
+    content_type = response.headers.get("Content-Type", "unknown")
+    status = getattr(response, "status", "unknown")
+    if not raw:
+        raise RuntimeError(
+            f"Gemini returned an empty HTTP {status} response from {url} "
+            f"(content-type: {content_type}). Check the API base and protocol."
+        )
+    try:
+        result = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        preview = raw[:500].decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Gemini returned a non-JSON HTTP {status} response from {url} "
+            f"(content-type: {content_type}): {preview}"
+        ) from exc
+    if not isinstance(result, dict):
+        raise RuntimeError(f"Gemini returned a non-object JSON response from {url}.")
+    return result
+
+
 def request_gemini(payload: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     api_key = args.api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise RuntimeError("Missing Gemini API key. Set GEMINI_API_KEY or GOOGLE_API_KEY.")
-    url = f"{args.api_base.rstrip('/')}/interactions"
+    url = request_url(args)
     body = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
     last_error: Exception | None = None
@@ -133,11 +192,11 @@ def request_gemini(payload: dict[str, Any], args: argparse.Namespace) -> dict[st
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(request, timeout=args.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
+                return decode_json_response(response, url)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             last_error = RuntimeError(f"Gemini HTTP {exc.code}: {detail}")
-        except urllib.error.URLError as exc:
+        except (urllib.error.URLError, RuntimeError) as exc:
             last_error = RuntimeError(f"Gemini request failed: {exc}")
         if attempt < args.retries:
             time.sleep(args.retry_delay * (attempt + 1))
@@ -300,6 +359,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model", default=os.environ.get("GEMINI_TEXT_MODEL", DEFAULT_MODEL))
     parser.add_argument("--api-base", default=os.environ.get("GEMINI_API_BASE", DEFAULT_API_BASE))
+    parser.add_argument(
+        "--api-style",
+        choices=("interactions", "generate_content"),
+        default=os.environ.get("GEMINI_API_STYLE", DEFAULT_API_STYLE),
+        help="Gemini REST protocol. generate_content supports Gemini-native proxy gateways.",
+    )
     parser.add_argument("--api-key", default=os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--retries", type=int, default=2)
@@ -325,7 +390,12 @@ def main() -> int:
         args.geometry_prompts_per_object,
     )
     objects = parse_objects(
-        extract_output_text(request_gemini(build_request(image, prompt, args.model), args)),
+        extract_output_text(
+            request_gemini(
+                build_request(image, prompt, args.model, args.api_style),
+                args,
+            )
+        ),
         geometry_prompts_per_object=args.geometry_prompts_per_object,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
