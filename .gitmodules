@@ -4,7 +4,7 @@
 	branch = main
 [submodule "third_party/sam-3d-objects"]
 	path = third_party/sam-3d-objects
-	url = https://github.com/robosnap/sam-3d-objects.git
+	url = https://github.com/embosys/sam-3d-objects.git
 	branch = main
 [submodule "third_party/lyra"]
 	path = third_party/lyra
