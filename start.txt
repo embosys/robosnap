@@ -5,7 +5,7 @@ set +a
 
 CUDA_VISIBLE_DEVICES=0 INPUT_IMAGE="$PWD/examples/test1.png" OUTPUT_DIR="$PWD/outputs/full_test_31pro_v4" bash scripts/run_auto_pipeline.sh
 
-
+CUDA_DEVICE_ORDER=PCI_BUS_ID \
 CUDA_VISIBLE_DEVICES=0 \
 INPUT_IMAGE="$PWD/examples/test1.png" \
 OUTPUT_DIR="$PWD/outputs/full_test_31pro_v4" \
