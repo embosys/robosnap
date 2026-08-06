@@ -181,6 +181,8 @@ install_asset() {
     PIP_EXTRA_INDEX_URL="${PIP_EXTRA_INDEX_URLS}" \
     "${CONDA_BIN}" run -n "${ASSET_ENV}" python -m pip install \
     -e "${ROOT}/third_party/sam-3d-objects[inference]" --no-build-isolation
+  # nvdiffrast is required for texture baking but not listed in sam-3d-objects dependencies
+  build_pip_install "${ASSET_ENV}" "git+https://github.com/NVlabs/nvdiffrast.git" --no-build-isolation
   # sam-3d-objects/patching/hydra is DISABLED: it overwrites hydra/core/utils.py
   # from raw.githubusercontent.com, which is unreachable on this network (403 +
   # self-signed proxy cert). The equivalent patch was applied manually to the
