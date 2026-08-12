@@ -42,7 +42,7 @@ bash scripts/run_auto_pipeline.sh
 
 The default adapter uses Gemini for object detection and semantic background editing. Provider commands and input/output paths can be changed in `configs/auto_pipeline.env`. 
 
-Optional geometry prompts can improve SAM3 masks for small or visually ambiguous objects. Configure `GEOMETRY_PROMPTS_PER_OBJECT` as needed.
+Mask quality depends on the selected API and strongly affects downstream stability. For best performance, use the GUI to inspect and refine masks. Optional geometry prompts can improve SAM3 masks for small or visually ambiguous objects. Configure `GEOMETRY_PROMPTS_PER_OBJECT` as needed.
 
 The final outputs include:
 
