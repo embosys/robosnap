@@ -18,7 +18,7 @@ RoboSnap reconstructs real-world scenes into simulation-ready assets from single
 
 We also provide **a fully automatic pipeline** that transforms a single image into a layered simulation-ready scene with object assets and background context within around **20 minutes**.
 
-More components from the paper, including **evaluation code**, **real-robot deployment code**, and the **DROID-Sim** dataset will be released soon **this month (07/26)**. Stay tuned!
+More components from the paper, including **evaluation code** and the **DROID-Sim** dataset with trajectory replay settings, will be released around **late August or early September**. Stay tuned!
 
 
 ## Release Plan
