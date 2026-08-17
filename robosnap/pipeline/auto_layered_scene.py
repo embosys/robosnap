@@ -378,7 +378,7 @@ def main() -> int:
     runner = Runner(args)
     scene_dir = runner.output_dir
     image_path = args.image.expanduser().resolve()
-
+    # 注释：分割图像
     preprocess_cmd = [
         sys.executable,
         "-m",

@@ -95,3 +95,6 @@ scripts/finalize_external_imagegen_background.py
 scripts/remap_assistant_vlm_object_map.py
 scripts/run_assistant_vlm_mask_batch.py
 scripts/run_masks_for_external_imagegen.py
+
+#
+.idea

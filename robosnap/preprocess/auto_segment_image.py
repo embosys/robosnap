@@ -284,6 +284,7 @@ def add_geometry_prompt_instruction(prompt: str, count: int) -> str:
 
 
 def load_objects(args: argparse.Namespace, output_dir: Path) -> list[dict[str, Any]]:
+
     if args.objects:
         return normalize_objects(
             parse_comma_list(args.objects),
@@ -629,6 +630,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    # 注释：图像分割
     args = parse_args()
     if args.geometry_prompts_per_object < 0:
         raise ValueError("--geometry-prompts-per-object must be non-negative.")
