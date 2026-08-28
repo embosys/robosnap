@@ -202,7 +202,12 @@ install_lyra() {
     cmake ninja libgl ffmpeg packaging nvtx-c
   run env CONDA_BACKUP_CXX= "${CONDA_BIN}" install -y -n "${LYRA_ENV}" -c conda-forge \
     gcc=13.3.0 gxx=13.3.0 eigen zlib
-  run "${CONDA_BIN}" install -y -n "${LYRA_ENV}" -c nvidia/label/cuda-12.8.0 cuda
+  # cuda meta-package from the nvidia channel ships __win/__linux variants and
+  # the libmamba solver can pick the unsatisfiable __win build. Install the
+  # linux-64 cuda-toolkit directly with defaults excluded (--override-channels)
+  # so the solve stays within nvidia + conda-forge.
+  run "${CONDA_BIN}" install -y -n "${LYRA_ENV}" --override-channels \
+    -c nvidia/label/cuda-12.8.0 -c conda-forge cuda-toolkit=12.8.0
   pip_install "${LYRA_ENV}" --upgrade pip "setuptools<81" wheel packaging ninja hatchling hatch-requirements-txt scikit-build-core editables
   pip_install "${LYRA_ENV}" --index-url "${TORCH_CU128_INDEX}" torch==2.7.1 torchvision==0.22.1
   build_pip_install "${LYRA_ENV}" --no-deps -r "${ROOT}/third_party/lyra/Lyra-2/requirements.txt"
