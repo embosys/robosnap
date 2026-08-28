@@ -18,7 +18,7 @@ RoboSnap reconstructs real-world scenes into simulation-ready assets from single
 
 We also provide **a fully automatic pipeline** that transforms a single image into a layered simulation-ready scene with object assets and background context within around **20 minutes**.
 
-More components from the paper, including **evaluation code**, **real-robot deployment code**, and the **DROID-Sim** dataset will be released soon **this month (07/26)**. Stay tuned!
+More components from the paper, including **evaluation code** and the **DROID-Sim** dataset with trajectory replay settings, will be released around **late August or early September**. Stay tuned!
 
 
 ## Release Plan
@@ -42,7 +42,7 @@ bash scripts/run_auto_pipeline.sh
 
 The default adapter uses Gemini for object detection and semantic background editing. Provider commands and input/output paths can be changed in `configs/auto_pipeline.env`. 
 
-Optional geometry prompts can improve SAM3 masks for small or visually ambiguous objects. Configure `GEOMETRY_PROMPTS_PER_OBJECT` as needed.
+Mask quality depends on the selected API and strongly affects downstream stability. For best performance, use the GUI to inspect and refine masks. Optional geometry prompts can improve SAM3 masks for small or visually ambiguous objects. Configure `GEOMETRY_PROMPTS_PER_OBJECT` as needed.
 
 The final outputs include:
 
